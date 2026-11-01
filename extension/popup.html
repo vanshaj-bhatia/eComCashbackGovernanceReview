@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cashback & Order Governance Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="brand-wrapper">
+      <div class="brand-icon">🛡️</div>
+      <div>
+        <div class="brand-title">Cashback & Governance Tracker</div>
+        <div class="brand-subtitle">
+          <span class="badge-live"></span>
+          <span>Order Fraud Guardrail active</span>
+        </div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="btnOpenSidePanel" class="btn-icon-ghost" title="Dock in Side Panel">◫</button>
+      <button id="btnToggleSettings" class="btn-icon-ghost" title="Google Sheet Sync Settings">⚙️</button>
+    </div>
+  </header>
+
+  <!-- Google Sheet Sync Settings Drawer (Collapsible) -->
+  <div id="settingsDrawer" class="settings-drawer">
+    <div class="settings-title">
+      <span>📊 Google Sheet Web App Sync</span>
+    </div>
+    <div class="form-group" style="margin-bottom: 8px;">
+      <label class="form-label" for="settingWebhookUrl">Google Apps Script Web App URL</label>
+      <input 
+        type="url" 
+        id="settingWebhookUrl" 
+        class="form-input" 
+        placeholder="https://script.google.com/macros/s/.../exec"
+      />
+      <div class="input-hint">Paste your deployed Web App URL to auto-sync each recorded cashback.</div>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center; justify-content: space-between;">
+      <label style="font-size: 11.5px; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+        <input type="checkbox" id="settingAutoSync" checked />
+        <span>Auto-sync new entries</span>
+      </label>
+      <div style="display: flex; gap: 6px;">
+        <button type="button" id="btnTestWebhook" class="btn-secondary" style="padding: 4px 8px; font-size: 11px;">
+          Test Ping
+        </button>
+        <button type="button" id="btnSaveSettings" class="btn-primary" style="padding: 4px 10px; font-size: 11px;">
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Duplicate Guardrail Warning Banner -->
+  <div id="duplicateAlert" class="guardrail-alert" role="alert">
+    <div class="guardrail-title">
+      <span>⚠️ DUPLICATE ORDER ID DETECTED!</span>
+    </div>
+    <div class="guardrail-desc" id="duplicateAlertText">
+      This Order ID has already been claimed! Disbursement submission is locked.
+    </div>
+    <div class="guardrail-badge-details">
+      <span id="duplicateAlertDate">Claimed on: --</span>
+      <span id="duplicateAlertAmount" style="font-weight: 700;">Amount: ₹0</span>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <main class="container">
+
+    <!-- Disbursement Submission Form -->
+    <form id="cashbackForm" class="form-card" novalidate>
+      <div class="form-grid">
+        
+        <!-- Order ID -->
+        <div class="form-group form-full">
+          <label class="form-label" for="orderId">
+            <span>Order ID <span class="req">*</span></span>
+            <span id="orderIdStatusTag" style="font-size: 10.5px; font-weight: 600; color: #10b981; display: none;">✓ Available</span>
+          </label>
+          <div class="input-with-icon">
+            <span class="input-icon">#</span>
+            <input 
+              type="text" 
+              id="orderId" 
+              class="form-input" 
+              placeholder="e.g. 402-9842182-1928421 or ORD-88910"
+              required 
+              autocomplete="off"
+            />
+          </div>
+          <div class="input-hint">Checked against local records & synced registry in real-time.</div>
+        </div>
+
+        <!-- Customer Name / WhatsApp Number -->
+        <div class="form-group form-full">
+          <label class="form-label" for="customerInfo">
+            <span>Customer Name / WhatsApp <span style="font-weight: normal; color: var(--text-muted);">(Optional)</span></span>
+          </label>
+          <div class="input-with-icon">
+            <span class="input-icon">👤</span>
+            <input 
+              type="text" 
+              id="customerInfo" 
+              class="form-input" 
+              placeholder="e.g. Rahul Sharma / +91 98765 43210"
+            />
+          </div>
+        </div>
+
+        <!-- Order Amount (₹) -->
+        <div class="form-group">
+          <label class="form-label" for="orderAmount">
+            <span>Order Amount (₹) <span class="req">*</span></span>
+          </label>
+          <div class="input-with-icon">
+            <span class="input-icon">₹</span>
+            <input 
+              type="number" 
+              id="orderAmount" 
+              class="form-input" 
+              placeholder="1499" 
+              min="1" 
+              step="any"
+              required 
+            />
+          </div>
+        </div>
+
+        <!-- Cashback Initiated (₹) -->
+        <div class="form-group">
+          <label class="form-label" for="cashbackAmount">
+            <span>Cashback (₹) <span class="req">*</span></span>
+            <span id="cashbackPercentageBadge" class="cashback-meta-tag" style="display: none;">0%</span>
+          </label>
+          <div class="input-with-icon">
+            <span class="input-icon">₹</span>
+            <input 
+              type="number" 
+              id="cashbackAmount" 
+              class="form-input" 
+              placeholder="150" 
+              min="0" 
+              step="any"
+              required 
+            />
+          </div>
+        </div>
+
+        <!-- Date of Cashback -->
+        <div class="form-group">
+          <label class="form-label" for="dateOfCashback">
+            <span>Disbursement Date <span class="req">*</span></span>
+          </label>
+          <input 
+            type="datetime-local" 
+            id="dateOfCashback" 
+            class="form-input" 
+            required 
+          />
+        </div>
+
+        <!-- Status / Workflow Dropdown -->
+        <div class="form-group">
+          <label class="form-label" for="claimStatus">
+            <span>Status <span class="req">*</span></span>
+          </label>
+          <select id="claimStatus" class="form-select">
+            <option value="Initiated">Initiated</option>
+            <option value="Pending UPI">Pending UPI</option>
+            <option value="Completed" selected>Completed</option>
+            <option value="Rejected">Rejected</option>
+          </select>
+        </div>
+
+        <!-- Screenshots Section (Order & Review) -->
+        <div class="form-full" style="margin-top: 4px;">
+          <div class="form-label" style="margin-bottom: 6px;">
+            <span>Screenshots Evidence <span style="font-weight: normal; color: var(--text-muted);">(Upload, Drag or Ctrl+V)</span></span>
+          </div>
+          <div class="screenshot-grid">
+            
+            <!-- Order Screenshot Dropzone -->
+            <div id="orderDropzone" class="dropzone-box" tabindex="0">
+              <div class="dropzone-default">
+                <div class="dropzone-icon">📦</div>
+                <div class="dropzone-text">Order Screenshot</div>
+                <div class="dropzone-sub">Drop or Paste image</div>
+              </div>
+              <div id="orderPreviewContainer" class="preview-container">
+                <img id="orderPreviewImg" class="preview-img" alt="Order Preview" />
+                <button type="button" id="btnRemoveOrderImg" class="btn-remove-preview" title="Remove">✕</button>
+              </div>
+              <input type="file" id="orderImgInput" class="dropzone-input" accept="image/*" />
+            </div>
+
+            <!-- Review Screenshot Dropzone -->
+            <div id="reviewDropzone" class="dropzone-box" tabindex="0">
+              <div class="dropzone-default">
+                <div class="dropzone-icon">⭐</div>
+                <div class="dropzone-text">Review Screenshot</div>
+                <div class="dropzone-sub">Drop or Paste image</div>
+              </div>
+              <div id="reviewPreviewContainer" class="preview-container">
+                <img id="reviewPreviewImg" class="preview-img" alt="Review Preview" />
+                <button type="button" id="btnRemoveReviewImg" class="btn-remove-preview" title="Remove">✕</button>
+              </div>
+              <input type="file" id="reviewImgInput" class="dropzone-input" accept="image/*" />
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Notes -->
+        <div class="form-group form-full">
+          <label class="form-label" for="claimNotes">
+            <span>Notes / UPI Ref ID <span style="font-weight: normal; color: var(--text-muted);">(Optional)</span></span>
+          </label>
+          <input 
+            type="text" 
+            id="claimNotes" 
+            class="form-input" 
+            placeholder="e.g. Paid via PhonePe txn #9812491, 5-star verified"
+          />
+        </div>
+
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="form-actions">
+        <button type="button" id="btnResetForm" class="btn-secondary">Clear</button>
+        <button type="submit" id="btnSubmitClaim" class="btn-primary">
+          <span id="btnSubmitSpinner" style="display: none;">⏳</span>
+          <span id="btnSubmitText">🛡️ Record & Guard Order</span>
+        </button>
+      </div>
+    </form>
+
+    <!-- Recent Claims Governance Table -->
+    <section class="claims-card">
+      <div class="claims-header">
+        <div class="claims-title">
+          <span>Recent Claims</span>
+          <span id="claimsCountBadge" class="claims-count-badge">0</span>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button type="button" id="btnExportCsv" class="btn-secondary" style="padding: 4px 8px; font-size: 11px;" title="Export records to CSV / Excel">
+            📥 Export CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Search Bar -->
+      <div class="search-bar">
+        <div class="input-with-icon">
+          <span class="input-icon">🔍</span>
+          <input 
+            type="text" 
+            id="searchQuery" 
+            class="form-input" 
+            placeholder="Search Order ID or WhatsApp Number..." 
+          />
+        </div>
+      </div>
+
+      <!-- Table View -->
+      <div class="claims-table-wrapper">
+        <table class="claims-table">
+          <thead>
+            <tr>
+              <th>Order ID</th>
+              <th>Customer</th>
+              <th>Order</th>
+              <th>Cashback</th>
+              <th>Status</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody id="claimsTableBody">
+            <!-- Dynamic rows will be inserted here -->
+          </tbody>
+        </table>
+        <div id="emptyClaimsPlaceholder" class="claims-empty">
+          No cashback claims recorded yet.
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Toast Notification -->
+  <div id="toastMessage" class="toast-msg">
+    <span id="toastIcon">✓</span>
+    <span id="toastText">Record saved successfully!</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

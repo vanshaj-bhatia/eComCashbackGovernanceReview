@@ -1,0 +1,6 @@
+{
+  "name": "Cashback & Order Governance Tracker",
+  "description": "Enterprise Chrome Extension (Manifest V3) and governance dashboard for e-commerce fraud prevention, duplicate claim detection, WhatsApp Web integration, and Google Sheets sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

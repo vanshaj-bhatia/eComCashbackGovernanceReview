@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#312e81" />
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bgGrad)" />
+  <!-- Shield Outline -->
+  <path d="M64 22 L98 34 V66 C98 88 83 104 64 110 C45 104 30 88 30 66 V34 Z" fill="url(#shieldGrad)" />
+  <path d="M64 27 L93 37 V65 C93 84 80 98 64 104 C48 98 35 84 35 65 V37 Z" fill="#ffffff" opacity="0.15" />
+  <!-- Currency Rupee Symbol ₹ and Checkmark -->
+  <text x="64" y="74" font-family="-apple-system, BlinkMacSystemFont, Arial, sans-serif" font-size="44" font-weight="900" fill="#ffffff" text-anchor="middle">₹</text>
+  <circle cx="90" cy="90" r="14" fill="#22c55e" stroke="#ffffff" stroke-width="3" />
+  <path d="M84 90 L88 94 L96 86" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+</svg>

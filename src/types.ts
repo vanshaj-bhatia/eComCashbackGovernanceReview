@@ -12,7 +12,10 @@ export interface CashbackRecord {
   notes: string;
   orderScreenshot: string | null;
   reviewScreenshot: string | null;
+  hasOrderScreenshot?: boolean;
+  hasReviewScreenshot?: boolean;
   syncedToGoogleSheet?: boolean;
+  agentName?: string;
 }
 
 export interface GovernanceSettings {

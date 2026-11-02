@@ -16,6 +16,7 @@ let settings = {
 let activeDuplicate = null;
 let orderScreenshotBase64 = null;
 let reviewScreenshotBase64 = null;
+let editingRecord = null; // Track record currently being edited
 
 // DOM Elements
 const form = document.getElementById("cashbackForm");
@@ -28,6 +29,11 @@ const cashbackPercentBadge = document.getElementById("cashbackPercentageBadge");
 const dateOfCashbackInput = document.getElementById("dateOfCashback");
 const claimStatusSelect = document.getElementById("claimStatus");
 const claimNotesInput = document.getElementById("claimNotes");
+
+// Edit Mode Banner Elements
+const editModeBanner = document.getElementById("editModeBanner");
+const editModeOrderId = document.getElementById("editModeOrderId");
+const btnCancelEdit = document.getElementById("btnCancelEdit");
 
 // Duplicate Alert
 const duplicateAlert = document.getElementById("duplicateAlert");
@@ -45,6 +51,10 @@ const searchQuery = document.getElementById("searchQuery");
 const claimsTableBody = document.getElementById("claimsTableBody");
 const emptyClaimsPlaceholder = document.getElementById("emptyClaimsPlaceholder");
 const claimsCountBadge = document.getElementById("claimsCountBadge");
+const lastSyncedLabel = document.getElementById("lastSyncedLabel");
+const btnSyncFromSheet = document.getElementById("btnSyncFromSheet");
+const btnRefreshClaims = document.getElementById("btnRefreshClaims");
+const btnRefreshText = document.getElementById("btnRefreshText");
 const toastMessage = document.getElementById("toastMessage");
 const toastText = document.getElementById("toastText");
 
@@ -70,13 +80,18 @@ const reviewPreviewContainer = document.getElementById("reviewPreviewContainer")
 const reviewPreviewImg = document.getElementById("reviewPreviewImg");
 const btnRemoveReviewImg = document.getElementById("btnRemoveReviewImg");
 
-// Initialize on Load
+// Initialize on Load (Auto-syncs on first load from Google Sheet)
 document.addEventListener("DOMContentLoaded", async () => {
   initDefaultDateTime();
   await loadSettings();
   await loadRecords();
   setupEventListeners();
   checkUrlParamsForPrefill();
+
+  // Automatic sync on first page load across all phones/devices
+  if (settings.webhookUrl) {
+    syncFromGoogleSheet(true);
+  }
 });
 
 /**
@@ -163,8 +178,21 @@ function setupEventListeners() {
     renderClaimsTable(filtered);
   });
 
+  // Cancel Edit mode button
+  if (btnCancelEdit) {
+    btnCancelEdit.addEventListener("click", cancelEdit);
+  }
+
   // Export to CSV
   btnExportCsv.addEventListener("click", exportToCsv);
+
+  // Sync / Refresh with Google Sheet buttons
+  if (btnSyncFromSheet) {
+    btnSyncFromSheet.addEventListener("click", () => syncFromGoogleSheet(false));
+  }
+  if (btnRefreshClaims) {
+    btnRefreshClaims.addEventListener("click", () => syncFromGoogleSheet(false));
+  }
 
   // Settings Drawer Toggle & Save
   btnToggleSettings.addEventListener("click", () => {
@@ -245,8 +273,10 @@ function handleOrderIdInput() {
     return;
   }
 
-  // Look for match in existing records
-  const match = records.find(r => normalizeOrderId(r.orderId) === cleanId);
+  // Look for match in existing records (excluding current record if editing)
+  const match = records.find(r => 
+    normalizeOrderId(r.orderId) === cleanId && (!editingRecord || r.id !== editingRecord.id)
+  );
 
   if (match) {
     // DUPLICATE DETECTED! Trigger Guardrail Warning
@@ -307,8 +337,10 @@ async function handleFormSubmit(e) {
     return;
   }
 
-  // Double check duplicate guardrail before saving
-  const existing = records.find(r => normalizeOrderId(r.orderId) === cleanId);
+  // Double check duplicate guardrail before saving (excluding self if editing)
+  const existing = records.find(r => 
+    normalizeOrderId(r.orderId) === cleanId && (!editingRecord || r.id !== editingRecord.id)
+  );
   if (existing) {
     handleOrderIdInput();
     showToast("Submission blocked: Duplicate Order ID detected!", "🚫");
@@ -330,7 +362,52 @@ async function handleFormSubmit(e) {
     return;
   }
 
-  // Construct new claim record
+  btnSubmit.disabled = true;
+  btnSubmitSpinner.style.display = "inline";
+
+  // CASE 1: Updating an existing record
+  if (editingRecord) {
+    btnSubmitText.textContent = "Updating record...";
+    const updatedRecord = {
+      ...editingRecord,
+      orderId: orderIdInput.value.trim(),
+      customerInfo: customerInfoInput.value.trim() || "N/A",
+      orderAmount: orderAmt,
+      cashbackAmount: cashbackAmt,
+      dateOfCashback: dateOfCashbackInput.value || editingRecord.dateOfCashback,
+      status: claimStatusSelect.value,
+      notes: claimNotesInput.value.trim(),
+      orderScreenshot: orderScreenshotBase64 || editingRecord.orderScreenshot,
+      reviewScreenshot: reviewScreenshotBase64 || editingRecord.reviewScreenshot
+    };
+
+    try {
+      const idx = records.findIndex(r => r.id === editingRecord.id);
+      if (idx !== -1) {
+        records[idx] = updatedRecord;
+      }
+      await storage.set(STORAGE_KEY_RECORDS, records);
+      renderClaimsTable(records);
+
+      if (settings.webhookUrl && settings.autoSync) {
+        btnSubmitText.textContent = "Updating Google Sheet...";
+        await updateRecordInGoogleSheet(updatedRecord, settings.webhookUrl);
+      }
+
+      showToast(`Updated claim #${updatedRecord.orderId}!`, "✓");
+      cancelEdit();
+    } catch (err) {
+      console.error("Failed to update claim:", err);
+      showToast("Error updating claim: " + err.message, "✕");
+    } finally {
+      btnSubmitSpinner.style.display = "none";
+      btnSubmit.disabled = false;
+      btnSubmitText.textContent = "🛡️ Record & Guard Order";
+    }
+    return;
+  }
+
+  // CASE 2: Creating a new record
   const newRecord = {
     id: "claim_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
     timestamp: new Date().toISOString(),
@@ -346,8 +423,6 @@ async function handleFormSubmit(e) {
     syncedToGoogleSheet: false
   };
 
-  btnSubmit.disabled = true;
-  btnSubmitSpinner.style.display = "inline";
   btnSubmitText.textContent = "Securing record...";
 
   try {
@@ -403,6 +478,139 @@ function resetForm() {
 }
 
 /**
+ * Initiates Edit Mode for a selected claim
+ */
+function startEditRecord(item) {
+  editingRecord = item;
+  orderIdInput.value = item.orderId;
+  customerInfoInput.value = item.customerInfo === "N/A" ? "" : item.customerInfo;
+  orderAmountInput.value = item.orderAmount;
+  cashbackAmountInput.value = item.cashbackAmount;
+  if (item.dateOfCashback) {
+    dateOfCashbackInput.value = item.dateOfCashback.substring(0, 16);
+  }
+  claimStatusSelect.value = item.status;
+  claimNotesInput.value = item.notes || "";
+
+  // Screenshots
+  orderScreenshotBase64 = item.orderScreenshot || null;
+  if (orderScreenshotBase64) {
+    showImagePreview(orderPreviewContainer, orderPreviewImg, orderScreenshotBase64);
+  } else {
+    hideImagePreview(orderDropzone, orderPreviewContainer, orderImgInput);
+  }
+
+  reviewScreenshotBase64 = item.reviewScreenshot || null;
+  if (reviewScreenshotBase64) {
+    showImagePreview(reviewPreviewContainer, reviewPreviewImg, reviewScreenshotBase64);
+  } else {
+    hideImagePreview(reviewDropzone, reviewPreviewContainer, reviewImgInput);
+  }
+
+  updateCashbackPercentage();
+
+  // Show Edit Mode Banner
+  if (editModeBanner) editModeBanner.style.display = "flex";
+  if (editModeOrderId) editModeOrderId.textContent = "#" + item.orderId;
+  btnSubmitText.textContent = "💾 Update Claim Record";
+  btnSubmit.disabled = false;
+  hideDuplicateAlert();
+
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  showToast(`Editing claim #${item.orderId}`, "✏️");
+}
+
+/**
+ * Cancels Edit Mode
+ */
+function cancelEdit() {
+  editingRecord = null;
+  if (editModeBanner) editModeBanner.style.display = "none";
+  resetForm();
+  showToast("Edit mode cancelled", "ℹ️");
+}
+
+/**
+ * Deletes a claim entry locally and in Google Sheet
+ */
+async function deleteRecord(orderId) {
+  const cleanTarget = normalizeOrderId(orderId);
+  const target = records.find(r => normalizeOrderId(r.orderId) === cleanTarget);
+  if (!target) return;
+
+  if (!confirm(`Are you sure you want to delete claim for Order #${orderId}?\n\nThis will remove it from the governance log.`)) {
+    return;
+  }
+
+  records = records.filter(r => normalizeOrderId(r.orderId) !== cleanTarget);
+  await storage.set(STORAGE_KEY_RECORDS, records);
+  renderClaimsTable(records);
+
+  // If deleting currently edited record, exit edit mode
+  if (editingRecord && normalizeOrderId(editingRecord.orderId) === cleanTarget) {
+    cancelEdit();
+  }
+
+  // Clear duplicate alert if user is currently looking at this order
+  if (normalizeOrderId(orderIdInput.value) === cleanTarget) {
+    handleOrderIdInput();
+  }
+
+  showToast(`Deleted claim #${orderId}`, "✓");
+
+  // Sync deletion with Google Sheets
+  if (settings.webhookUrl && settings.autoSync) {
+    deleteRecordFromGoogleSheet(orderId, settings.webhookUrl);
+  }
+}
+
+/**
+ * Updates a claim row in Google Sheet via webhook
+ */
+async function updateRecordInGoogleSheet(record, webhookUrl) {
+  try {
+    const payload = {
+      action: "updateRecord",
+      orderId: record.orderId,
+      customerInfo: record.customerInfo,
+      orderAmount: record.orderAmount,
+      cashbackAmount: record.cashbackAmount,
+      dateOfCashback: record.dateOfCashback,
+      status: record.status,
+      notes: record.notes
+    };
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  } catch (err) {
+    console.warn("Failed to update Google Sheet:", err);
+  }
+}
+
+/**
+ * Deletes a claim row from Google Sheet via webhook
+ */
+async function deleteRecordFromGoogleSheet(orderId, webhookUrl) {
+  try {
+    const payload = {
+      action: "deleteRecord",
+      orderId: orderId
+    };
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  } catch (err) {
+    console.warn("Failed to delete from Google Sheet:", err);
+  }
+}
+
+/**
  * Syncs an individual record to the Google Apps Script Webhook
  */
 async function syncRecordToGoogleSheet(record, webhookUrl) {
@@ -433,6 +641,98 @@ async function syncRecordToGoogleSheet(record, webhookUrl) {
   } catch (e) {
     console.warn("Webhook sync error:", e);
     return { success: false, message: e.message };
+  }
+}
+
+/**
+ * Synchronizes all records from Google Sheet to local storage
+ * Merges entries across all phones & devices and enforces duplicate prevention
+ */
+async function syncFromGoogleSheet(silent = false) {
+  if (!settings.webhookUrl) {
+    if (!silent) {
+      showToast("Configure Google Apps Script URL in Settings (⚙️) first", "⚠️");
+    }
+    return;
+  }
+
+  if (btnRefreshText) btnRefreshText.textContent = "Syncing...";
+  if (btnSyncFromSheet) btnSyncFromSheet.classList.add("spinning");
+  if (lastSyncedLabel) lastSyncedLabel.textContent = "Syncing with Google Sheet...";
+
+  try {
+    // Apps Script GET returns all sheet records
+    const syncUrl = settings.webhookUrl + (settings.webhookUrl.includes("?") ? "&" : "?") + "action=getRecords";
+    const res = await fetch(syncUrl);
+    const data = await res.json();
+
+    if (data.success && Array.isArray(data.records)) {
+      const remoteRecords = data.records;
+      
+      // Merge remote records with local records
+      // Map existing local records by normalized Order ID
+      const localMap = new Map();
+      records.forEach(r => {
+        const norm = normalizeOrderId(r.orderId);
+        if (norm) localMap.set(norm, r);
+      });
+
+      // Merge remote records
+      remoteRecords.forEach(remote => {
+        const norm = normalizeOrderId(remote.orderId);
+        if (!norm) return;
+
+        if (localMap.has(norm)) {
+          // Update existing with remote data, but preserve any local screenshot data if remote omitted it
+          const existing = localMap.get(norm);
+          localMap.set(norm, {
+            ...existing,
+            ...remote,
+            orderScreenshot: existing.orderScreenshot || remote.orderScreenshot,
+            reviewScreenshot: existing.reviewScreenshot || remote.reviewScreenshot,
+            syncedToGoogleSheet: true
+          });
+        } else {
+          localMap.set(norm, {
+            ...remote,
+            syncedToGoogleSheet: true
+          });
+        }
+      });
+
+      // Convert back to array sorted newest first
+      records = Array.from(localMap.values()).sort((a, b) => {
+        const timeA = new Date(a.dateOfCashback || a.timestamp || 0).getTime();
+        const timeB = new Date(b.dateOfCashback || b.timestamp || 0).getTime();
+        return timeB - timeA;
+      });
+
+      // Persist merged records to storage
+      await storage.set(STORAGE_KEY_RECORDS, records);
+      renderClaimsTable(records);
+
+      // Re-run order ID check if user currently has an ID typed
+      if (orderIdInput && orderIdInput.value) {
+        handleOrderIdInput();
+      }
+
+      const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (lastSyncedLabel) lastSyncedLabel.textContent = `Synced with Sheet at ${timeNow}`;
+
+      if (!silent) {
+        showToast(`Synced ${remoteRecords.length} records from Google Sheet!`, "✓");
+      }
+    } else {
+      if (lastSyncedLabel) lastSyncedLabel.textContent = "Sync error (Invalid response)";
+      if (!silent) showToast("Could not sync: " + (data.message || "Unknown error"), "⚠️");
+    }
+  } catch (err) {
+    console.warn("Failed to sync from Google Sheet:", err);
+    if (lastSyncedLabel) lastSyncedLabel.textContent = "Offline / Sync failed";
+    if (!silent) showToast("Sync failed: " + err.message, "✕");
+  } finally {
+    if (btnRefreshText) btnRefreshText.textContent = "Sync Sheet";
+    if (btnSyncFromSheet) btnSyncFromSheet.classList.remove("spinning");
   }
 }
 
@@ -506,14 +806,29 @@ function renderClaimsTable(items) {
         ${hasOrderShot || hasReviewShot ? `<span title="Screenshots attached" style="font-size: 10px; margin-left: 2px;">${hasOrderShot}${hasReviewShot}</span>` : ""}
       </td>
       <td style="color: #64748b; font-size: 10.5px;">${formattedDate}</td>
+      <td style="text-align: right; white-space: nowrap;">
+        <button type="button" class="btn-table-action btn-edit" title="Edit claim details">✏️</button>
+        <button type="button" class="btn-table-action btn-delete" title="Delete claim">🗑️</button>
+      </td>
     `;
 
-    // Clicking row pre-fills or tests order
+    // Row click inspects
     tr.style.cursor = "pointer";
     tr.addEventListener("click", () => {
       orderIdInput.value = item.orderId;
       handleOrderIdInput();
       showToast(`Loaded ${item.orderId} for inspection`, "ℹ️");
+    });
+
+    // Action button listeners
+    tr.querySelector(".btn-edit").addEventListener("click", (e) => {
+      e.stopPropagation();
+      startEditRecord(item);
+    });
+
+    tr.querySelector(".btn-delete").addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteRecord(item.orderId);
     });
 
     claimsTableBody.appendChild(tr);

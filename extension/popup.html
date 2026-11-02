@@ -21,6 +21,7 @@
       </div>
     </div>
     <div class="header-actions">
+      <button id="btnSyncFromSheet" class="btn-icon-ghost" title="Sync & Refresh with Google Sheet">🔄</button>
       <button id="btnOpenSidePanel" class="btn-icon-ghost" title="Dock in Side Panel">◫</button>
       <button id="btnToggleSettings" class="btn-icon-ghost" title="Google Sheet Sync Settings">⚙️</button>
     </div>
@@ -74,8 +75,20 @@
   <!-- Main Container -->
   <main class="container">
 
+    <!-- Active Edit Mode Banner -->
+    <div id="editModeBanner" class="edit-banner" style="display: none; background: #e0e7ff; border: 1.5px solid #6366f1; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; display: none; justify-content: space-between; align-items: center;">
+      <div style="font-size: 11.5px; font-weight: 700; color: #3730a3; display: flex; align-items: center; gap: 6px;">
+        <span>✏️ Editing Claim:</span>
+        <span id="editModeOrderId" style="font-family: monospace;">#--</span>
+      </div>
+      <button type="button" id="btnCancelEdit" style="background: #ffffff; border: 1px solid #c7d2fe; color: #4338ca; border-radius: 4px; padding: 2px 8px; font-size: 10.5px; font-weight: 700; cursor: pointer;">
+        ✕ Cancel Edit
+      </button>
+    </div>
+
     <!-- Disbursement Submission Form -->
     <form id="cashbackForm" class="form-card" novalidate>
+      <input type="hidden" id="editRecordId" value="" />
       <div class="form-grid">
         
         <!-- Order ID -->
@@ -245,11 +258,17 @@
     <!-- Recent Claims Governance Table -->
     <section class="claims-card">
       <div class="claims-header">
-        <div class="claims-title">
-          <span>Recent Claims</span>
-          <span id="claimsCountBadge" class="claims-count-badge">0</span>
+        <div>
+          <div class="claims-title">
+            <span>Recent Claims</span>
+            <span id="claimsCountBadge" class="claims-count-badge">0</span>
+          </div>
+          <div id="lastSyncedLabel" style="font-size: 10px; color: #94a3b8; margin-top: 1px;">Ready</div>
         </div>
         <div style="display: flex; gap: 6px;">
+          <button type="button" id="btnRefreshClaims" class="btn-secondary" style="padding: 4px 8px; font-size: 11px;" title="Fetch latest claims from Google Sheet">
+            🔄 <span id="btnRefreshText">Sync Sheet</span>
+          </button>
           <button type="button" id="btnExportCsv" class="btn-secondary" style="padding: 4px 8px; font-size: 11px;" title="Export records to CSV / Excel">
             📥 Export CSV
           </button>
@@ -280,6 +299,7 @@
               <th>Cashback</th>
               <th>Status</th>
               <th>Date</th>
+              <th style="text-align: right;">Actions</th>
             </tr>
           </thead>
           <tbody id="claimsTableBody">

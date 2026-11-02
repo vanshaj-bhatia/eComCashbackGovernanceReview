@@ -610,3 +610,34 @@ body {
 .sync-dot.error {
   background: #ef4444;
 }
+
+.spinning {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+
+.btn-table-action {
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  transition: all 0.15s ease;
+  margin-left: 2px;
+}
+
+.btn-table-action:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.btn-table-action.btn-delete:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}

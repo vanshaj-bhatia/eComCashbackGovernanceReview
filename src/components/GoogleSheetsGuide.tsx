@@ -47,16 +47,15 @@ export const GoogleSheetsGuide: React.FC<Props> = ({
     setTestResult(null);
 
     try {
-      const res = await fetch(testUrl.trim(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'ping' })
-      });
+      // Test GET records retrieval directly (bidirectional sync test)
+      const syncUrl = testUrl.trim() + (testUrl.includes('?') ? '&' : '?') + 'action=getRecords';
+      const res = await fetch(syncUrl);
       const data = await res.json();
       if (data.success) {
+        const count = Array.isArray(data.records) ? data.records.length : 0;
         setTestResult({
           status: 'success',
-          message: 'Connection successful! Webhook is live: ' + data.message
+          message: `Connection successful! Multi-device sync active: ${count} recorded claims retrieved from Google Sheet.`
         });
         onUpdateWebhookUrl(testUrl.trim());
       } else {
@@ -68,7 +67,7 @@ export const GoogleSheetsGuide: React.FC<Props> = ({
     } catch (err: unknown) {
       setTestResult({
         status: 'error',
-        message: 'Ping failed: ' + (err instanceof Error ? err.message : String(err)) + '. Ensure Web App deployment is set to "Anyone".'
+        message: 'Sync test failed: ' + (err instanceof Error ? err.message : String(err)) + '. Ensure Web App deployment access is set to "Anyone".'
       });
     } finally {
       setIsLoading(false);

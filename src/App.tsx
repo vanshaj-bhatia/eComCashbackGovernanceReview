@@ -23,7 +23,8 @@ import {
   HelpCircle,
   Smartphone,
   Maximize2,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 
 const STORAGE_KEY_APP_RECORDS = 'cgt_app_records_v1';
@@ -113,6 +114,110 @@ export default function App() {
   const [prefillOrderId, setPrefillOrderId] = useState<string | undefined>();
   const [prefillCustomer, setPrefillCustomer] = useState<string | undefined>();
 
+  // Cloud Sheet Sync State
+  const [isSyncingFromSheet, setIsSyncingFromSheet] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [syncToast, setSyncToast] = useState<{ msg: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  // Helper to normalize Order IDs
+  const normalizeId = (id: string) => id.trim().toUpperCase().replace(/^#+/, '');
+
+  // Synchronize entries from Google Sheet across all phones & devices
+  const syncFromGoogleSheet = async (silent = false) => {
+    if (!settings.webhookUrl) {
+      if (!silent) {
+        setSyncToast({
+          msg: 'Please set your Google Apps Script URL in Google Sheets Cloud Setup first',
+          type: 'warning'
+        });
+        setTimeout(() => setSyncToast(null), 3500);
+      }
+      return;
+    }
+
+    setIsSyncingFromSheet(true);
+    try {
+      const syncUrl = settings.webhookUrl + (settings.webhookUrl.includes('?') ? '&' : '?') + 'action=getRecords';
+      const res = await fetch(syncUrl);
+      const data = await res.json();
+
+      if (data.success && Array.isArray(data.records)) {
+        const remoteRecords: CashbackRecord[] = data.records;
+
+        setRecords((prev) => {
+          const map = new Map<string, CashbackRecord>();
+          prev.forEach((r) => {
+            const norm = normalizeId(r.orderId);
+            if (norm) map.set(norm, r);
+          });
+
+          remoteRecords.forEach((remote) => {
+            const norm = normalizeId(remote.orderId);
+            if (!norm) return;
+
+            if (map.has(norm)) {
+              const existing = map.get(norm)!;
+              map.set(norm, {
+                ...existing,
+                ...remote,
+                orderScreenshot: existing.orderScreenshot || remote.orderScreenshot,
+                reviewScreenshot: existing.reviewScreenshot || remote.reviewScreenshot,
+                syncedToGoogleSheet: true
+              });
+            } else {
+              map.set(norm, {
+                ...remote,
+                syncedToGoogleSheet: true
+              });
+            }
+          });
+
+          return Array.from(map.values()).sort((a, b) => {
+            const timeA = new Date(a.dateOfCashback || a.timestamp || 0).getTime();
+            const timeB = new Date(b.dateOfCashback || b.timestamp || 0).getTime();
+            return timeB - timeA;
+          });
+        });
+
+        setLastSyncedAt(new Date());
+
+        if (!silent) {
+          setSyncToast({
+            msg: `Successfully synced ${remoteRecords.length} records from Google Sheet across devices!`,
+            type: 'success'
+          });
+          setTimeout(() => setSyncToast(null), 3500);
+        }
+      } else {
+        if (!silent) {
+          setSyncToast({
+            msg: 'Sync notice: ' + (data.message || 'No records returned'),
+            type: 'warning'
+          });
+          setTimeout(() => setSyncToast(null), 3500);
+        }
+      }
+    } catch (err: unknown) {
+      console.warn('Sync failed:', err);
+      if (!silent) {
+        setSyncToast({
+          msg: 'Sync error: ' + (err instanceof Error ? err.message : String(err)),
+          type: 'error'
+        });
+        setTimeout(() => setSyncToast(null), 3500);
+      }
+    } finally {
+      setIsSyncingFromSheet(false);
+    }
+  };
+
+  // Auto-sync on first page load across all phones & computers!
+  useEffect(() => {
+    if (settings.webhookUrl) {
+      syncFromGoogleSheet(true);
+    }
+  }, [settings.webhookUrl]);
+
   // Persist records
   useEffect(() => {
     try {
@@ -134,8 +239,8 @@ export default function App() {
   // Record handler
   const handleAddRecord = async (newRecord: CashbackRecord): Promise<{ success: boolean; message?: string }> => {
     // Duplicate check
-    const cleanNew = newRecord.orderId.trim().toUpperCase().replace(/^#+/, '');
-    const exists = records.some((r) => r.orderId.trim().toUpperCase().replace(/^#+/, '') === cleanNew);
+    const cleanNew = normalizeId(newRecord.orderId);
+    const exists = records.some((r) => normalizeId(r.orderId) === cleanNew);
 
     if (exists) {
       return {
@@ -193,6 +298,90 @@ export default function App() {
         : syncErrorMsg
         ? `Recorded in local storage (Sheet sync note: ${syncErrorMsg})`
         : `Claim #${newRecord.orderId} secured in local storage!`
+    };
+  };
+
+  // Update existing record handler
+  const handleUpdateRecord = async (updatedRecord: CashbackRecord): Promise<{ success: boolean; message?: string }> => {
+    // Ensure Order ID isn't colliding with another claim
+    const cleanId = normalizeId(updatedRecord.orderId);
+    const collision = records.some((r) => r.id !== updatedRecord.id && normalizeId(r.orderId) === cleanId);
+
+    if (collision) {
+      return {
+        success: false,
+        message: `⚠️ Order ID #${updatedRecord.orderId} is already used by another claim.`
+      };
+    }
+
+    setRecords((prev) =>
+      prev.map((r) => (r.id === updatedRecord.id ? { ...updatedRecord, syncedToGoogleSheet: true } : r))
+    );
+
+    let syncNote = '';
+    if (settings.webhookUrl && settings.autoSync) {
+      try {
+        const payload = {
+          action: 'updateRecord',
+          orderId: updatedRecord.orderId,
+          customerInfo: updatedRecord.customerInfo,
+          orderAmount: updatedRecord.orderAmount,
+          cashbackAmount: updatedRecord.cashbackAmount,
+          dateOfCashback: updatedRecord.dateOfCashback,
+          status: updatedRecord.status,
+          notes: updatedRecord.notes
+        };
+
+        const res = await fetch(settings.webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!data.success) {
+          syncNote = ` (Sheet note: ${data.message})`;
+        }
+      } catch (err: unknown) {
+        syncNote = ` (Sheet sync pending: ${err instanceof Error ? err.message : String(err)})`;
+      }
+    }
+
+    return {
+      success: true,
+      message: `Updated claim #${updatedRecord.orderId}${syncNote}`
+    };
+  };
+
+  // Delete record handler
+  const handleDeleteRecord = async (orderIdToDelete: string): Promise<{ success: boolean; message?: string }> => {
+    const cleanTarget = normalizeId(orderIdToDelete);
+    setRecords((prev) => prev.filter((r) => normalizeId(r.orderId) !== cleanTarget));
+
+    let syncNote = '';
+    if (settings.webhookUrl && settings.autoSync) {
+      try {
+        const payload = {
+          action: 'deleteRecord',
+          orderId: orderIdToDelete
+        };
+
+        const res = await fetch(settings.webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!data.success) {
+          syncNote = ` (Sheet note: ${data.message})`;
+        }
+      } catch (err: unknown) {
+        syncNote = ` (Sheet sync pending: ${err instanceof Error ? err.message : String(err)})`;
+      }
+    }
+
+    return {
+      success: true,
+      message: `Deleted claim #${orderIdToDelete}${syncNote}`
     };
   };
 
@@ -266,6 +455,21 @@ export default function App() {
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Reset Seed</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => syncFromGoogleSheet(false)}
+              disabled={isSyncingFromSheet}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                settings.webhookUrl
+                  ? 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60'
+                  : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700'
+              }`}
+              title="Sync latest orders from Google Sheet across all phones & devices"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingFromSheet ? 'animate-spin text-emerald-400' : ''}`} />
+              <span>{isSyncingFromSheet ? 'Syncing...' : 'Sync Sheet'}</span>
             </button>
 
             <button
@@ -392,6 +596,8 @@ export default function App() {
               <ExtensionSimulator
                 records={records}
                 onAddRecord={handleAddRecord}
+                onUpdateRecord={handleUpdateRecord}
+                onDeleteRecord={handleDeleteRecord}
                 onClearRecords={handleClearRecords}
                 settings={settings}
                 onUpdateSettings={setSettings}
@@ -402,6 +608,9 @@ export default function App() {
                   setPrefillCustomer(undefined);
                 }}
                 compactMode={compactSidePanel}
+                onSyncFromSheet={() => syncFromGoogleSheet(false)}
+                isSyncingFromSheet={isSyncingFromSheet}
+                lastSyncedAt={lastSyncedAt}
               />
             </div>
           </div>
@@ -455,6 +664,22 @@ export default function App() {
       <footer className="border-t border-slate-800 bg-slate-900/60 py-4 px-4 text-center text-xs text-slate-500">
         <p>Cashback & Order Governance Tracker • Chrome Manifest V3 Production Extension • Internal E-Commerce Fraud Prevention</p>
       </footer>
+
+      {/* Sync Notification Banner */}
+      {syncToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+          <div className={`px-4 py-2.5 rounded-full text-xs font-semibold shadow-xl flex items-center gap-2 border animate-in fade-in slide-in-from-bottom-3 duration-200 ${
+            syncToast.type === 'error'
+              ? 'bg-red-950 text-red-200 border-red-700'
+              : syncToast.type === 'warning'
+              ? 'bg-amber-950 text-amber-200 border-amber-700'
+              : 'bg-emerald-950 text-emerald-200 border-emerald-700'
+          }`}>
+            <span>{syncToast.type === 'error' ? '🚫' : syncToast.type === 'warning' ? '⚠️' : '🔄'}</span>
+            <span>{syncToast.msg}</span>
+          </div>
+        </div>
+      )}
 
     </div>
   );
